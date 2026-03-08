@@ -184,7 +184,11 @@ Claude Code can read and edit `~/.config/skrivned/vocabulary.json` directly.
 
 Skrivned can automatically detect which project you're working on by querying iTerm2's current working directory. When a known project path is detected, project-specific vocabulary is loaded alongside global terms.
 
-Configure project path mappings in `~/.config/skrivned/projects.json`:
+Configure project path mappings in `~/.config/skrivned/projects.json` (see `projects.example.json` for the format):
+
+```bash
+cp projects.example.json ~/.config/skrivned/projects.json
+```
 
 ```json
 [

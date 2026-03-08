@@ -1,0 +1,5 @@
+[
+  { "prefix": "src/myapp", "project": "myapp" },
+  { "prefix": "src/blog", "project": "blog" },
+  { "prefix": "work/client-project", "project": "client" }
+]
