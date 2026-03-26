@@ -1,13 +1,11 @@
 import Foundation
 
 struct Config: Codable {
-    var holdHotkey: HotkeyConfig
-    var cleanHotkey: HotkeyConfig
+    var hotkey: HotkeyConfig
     var languageHints: [String]
 
     static let defaultConfig = Config(
-        holdHotkey: HotkeyConfig(keyCode: 63, modifiers: []),      // fn/globe
-        cleanHotkey: HotkeyConfig(keyCode: 47, modifiers: ["cmd", "opt", "ctrl"]),  // Cmd+Opt+Ctrl+.
+        hotkey: HotkeyConfig(keyCode: 61, modifiers: []),     // Right Option
         languageHints: ["en"]
     )
 

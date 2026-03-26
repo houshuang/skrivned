@@ -83,6 +83,7 @@ class HotkeyManager {
             Log.info("AnyKey: keyDown code=\(eventKeyCode) mods=0x\(mods)")
         }
 
+
         guard bindings[eventKeyCode] != nil else {
             return Unmanaged.passUnretained(event)
         }

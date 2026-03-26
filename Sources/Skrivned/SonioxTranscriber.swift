@@ -1,7 +1,8 @@
 import Foundation
 
 protocol SonioxTranscriberDelegate: AnyObject {
-    func transcriber(_ transcriber: SonioxTranscriber, didProduceText text: String)
+    func transcriber(_ transcriber: SonioxTranscriber, didProduceFinalText text: String)
+    func transcriber(_ transcriber: SonioxTranscriber, didUpdatePreview finalText: String, tentative: String)
     func transcriber(_ transcriber: SonioxTranscriber, didChangeState connected: Bool)
 }
 
@@ -14,7 +15,7 @@ class SonioxTranscriber {
     private var isConnected = false
     private var pendingAudioBuffer: [Data] = []
     private var accumulatedFinal = ""
-    private var typedLength = 0
+    private var lastFinalLength = 0
     private var contextTerms: [String] = []
 
     init(apiKey: String, languageHints: [String]) {
@@ -30,7 +31,7 @@ class SonioxTranscriber {
 
         contextTerms = terms
         accumulatedFinal = ""
-        typedLength = 0
+        lastFinalLength = 0
         Log.info("WS connecting to soniox...")
         let url = URL(string: "wss://stt-rt.soniox.com/transcribe-websocket")!
         urlSession = URLSession(configuration: .default)
@@ -187,19 +188,16 @@ class SonioxTranscriber {
             }
         }
 
-        // Accumulate final tokens (these never change)
         accumulatedFinal += newFinal
 
-        // Full text = all finals so far + current non-final tail
-        let fullText = accumulatedFinal + nonFinal
-
-        // Only type the new characters (delta)
-        if fullText.count > typedLength {
-            let delta = String(fullText.dropFirst(typedLength))
-            typedLength = fullText.count
-            Log.info("Typing delta: \"\(delta)\" (total \(typedLength) chars)")
-            self.delegate?.transcriber(self, didProduceText: delta)
+        // Emit new final text delta for accumulation
+        if !newFinal.isEmpty {
+            Log.info("Final: \"\(newFinal)\" (total \(accumulatedFinal.count) chars)")
+            self.delegate?.transcriber(self, didProduceFinalText: newFinal)
         }
+
+        // Always update preview with full state
+        self.delegate?.transcriber(self, didUpdatePreview: accumulatedFinal, tentative: nonFinal)
     }
 
     private func cleanToken(_ text: String) -> String {

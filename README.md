@@ -1,8 +1,8 @@
 # Skrivned
 
-Voice-to-text for macOS. Hold a key, speak, and text appears character-by-character in the focused app — no clipboard, no paste artifacts.
+Voice-to-text for macOS. Tap a hotkey to start dictating hands-free, tap again to stop. Text is transcribed in real-time, optionally post-processed by an LLM to clean up filler words and grammar, then inserted into the focused app.
 
-Uses [Soniox](https://soniox.com) streaming speech-to-text with support for multiple languages, and optionally [Google Gemini](https://ai.google.dev/) for a "clean mode" that removes filler words and fixes grammar before inserting text.
+Uses [Soniox](https://soniox.com) streaming speech-to-text with [Google Gemini](https://ai.google.dev/) for post-processing (filler word removal, grammar fixes, paragraph formatting, proper noun correction). When dictating into AI tools (Claude Code, Codex, Claude desktop app), post-processing is automatically skipped — these tools handle natural speech well, and skipping saves latency.
 
 ## How it works
 
@@ -11,23 +11,33 @@ Hotkey press → AudioStreamer (AVAudioEngine, 16kHz PCM)
                     ↓
              SonioxTranscriber (WebSocket streaming STT)
                     ↓
-              TextInserter (CGEventPost keystroke injection)
+             Live preview panel (floating overlay)
                     ↓
-              Text appears in focused app
+             Detect dictation target (AI app? AI CLI? General?)
+                    ↓
+          ┌─── AI target ───┐     ┌─── General target ───┐
+          │  Skip cleaning   │     │  TextCleaner (Gemini) │
+          └────────┬─────────┘     └──────────┬────────────┘
+                   ↓                          ↓
+             TextInserter (CGEventPost keystroke injection)
+                    ↓
+             Text appears in focused app
 ```
 
-Audio streams to Soniox in real-time over a WebSocket. Text is inserted character-by-character using macOS accessibility APIs (CGEvent keystroke simulation), so it works in any text field — editors, chat apps, browsers, terminals.
+Audio streams to Soniox in real-time over a WebSocket. A floating panel at the bottom of the screen shows the transcription as it happens — confirmed words in white, tentative words in gray. When you stop recording, the app detects whether the focused application is an AI tool (Claude Code, Codex, Claude desktop app). For AI targets, raw transcription is inserted directly — these tools handle natural speech including filler words. For everything else, text is sent through Gemini Flash to remove filler words, fix grammar, add paragraph breaks, and correct proper nouns. The cleaned text is then inserted into the focused app via macOS accessibility APIs (CGEvent keystroke simulation).
 
-The WebSocket connects on-demand when you start speaking and disconnects when done — no persistent connection, no idle resource usage.
+The audio engine is pre-warmed at launch so recording starts with minimal latency when you press the hotkey. Project detection and WebSocket connection happen in the background while audio is already being captured and buffered.
 
-**Clean mode** records the full utterance, then sends it through Gemini Flash to remove filler words ("um", "uh", "like"), fix grammar, and correct proper nouns before inserting the cleaned text.
+Both raw and cleaned text are logged to `~/.config/skrivned/dictation_log.jsonl` for later analysis, along with the detected project and dictation target.
+
+If no Gemini key is configured, raw transcription is inserted directly without post-processing.
 
 ## Requirements
 
 - macOS 13+
 - Swift 5.9+ (included with Xcode 15+)
 - [Soniox](https://soniox.com) API key (for speech-to-text)
-- [Google Gemini](https://ai.google.dev/) API key (optional, for clean mode)
+- [Google Gemini](https://ai.google.dev/) API key (recommended, for post-processing)
 - iTerm2 (optional, for automatic project detection)
 
 ## Setup
@@ -39,6 +49,7 @@ git clone https://github.com/houshuang/skrivned.git
 cd skrivned
 swift build -c release
 cp .build/release/skrivned ~/.local/bin/
+codesign -s - ~/.local/bin/skrivned
 ```
 
 Or build in debug mode for development:
@@ -59,7 +70,7 @@ EOF
 ```
 
 - `SONIOX_KEY` — required. Get one at [soniox.com](https://soniox.com).
-- `GEMINI_KEY` — optional. Enables clean mode. Get one at [ai.google.dev](https://ai.google.dev/).
+- `GEMINI_KEY` — recommended. Enables LLM post-processing. Get one at [ai.google.dev](https://ai.google.dev/).
 
 ### 3. Grant permissions
 
@@ -73,31 +84,52 @@ On first launch, skrivned will prompt for two macOS permissions:
 ```bash
 skrivned start              # Start the menubar daemon
 skrivned status             # Show current configuration
-skrivned set-hotkey <key>   # Set the hold-to-speak hotkey
+skrivned last               # Show last transcript (copies cleaned to clipboard)
+skrivned last --raw         # Show last transcript (copies raw to clipboard)
+skrivned log                # Open transcript log file
 skrivned --help             # Show help
 ```
 
 Running `skrivned` with no arguments also starts the daemon.
 
-### Dictation modes
+### Dictation
 
-**Hold mode** — Hold the hotkey, speak, release to stop. Text streams into the focused app in real-time as you speak.
+Tap the hotkey (default: Right Option) to start dictating hands-free. Tap again to stop. Text is post-processed through Gemini and inserted into the focused app.
 
-**Toggle mode** — Double-tap the same hotkey to start dictating hands-free. Single tap to stop. A pulsing red orb appears in the top-right corner while toggle mode is active.
+**Auto-cancel on Command shortcuts** — If you press a Command+key shortcut (e.g. ⌘C, ⌘V) while recording, the session is automatically abandoned. This prevents accidental dictation when you meant to use a keyboard shortcut.
 
-**Clean mode** — Uses a separate hotkey (default: F5) with tap-to-toggle: tap once to start recording, tap again to stop. The recorded speech is sent through Gemini to clean up filler words, fix grammar, and correct proper nouns before inserting. A pulsing blue orb appears while recording; it turns yellow while the LLM is processing.
+### Floating preview panel
+
+While recording, a dark translucent panel appears at the bottom of the screen:
+
+- **White text** — confirmed (final) words from Soniox
+- **Gray text** — tentative words that may still change
+- **Pulsing blue dot** — recording active
+- **"Processing..."** — text is being cleaned by Gemini (dot turns yellow)
+- **× button** — click to cancel recording or processing (text is logged but not inserted)
 
 ### Menu bar
 
 Skrivned runs as a menubar app with a colored "S" icon:
 
 - **Green** — idle, ready
-- **Pulsing red** — listening (normal dictation)
-- **Pulsing blue** — listening (clean mode)
-- **Blue ⋯** — cleaning text via Gemini
+- **Pulsing blue** — listening
+- **Blue ⋯** — post-processing via Gemini
 - **Yellow !** — error (check `~/.config/skrivned/skrivned.log`)
 
-Right-click the menubar icon to reload configuration, open config files, or edit vocabulary.
+Right-click the menubar icon to reload configuration, open config files, edit vocabulary, copy the last transcript, or open the transcript log.
+
+### Transcript retrieval
+
+If a dictation session fails (e.g. cursor was in a non-editable field), or if Gemini over-cleaned your text, you can recover it:
+
+```bash
+skrivned last          # Print last transcript and copy cleaned version to clipboard
+skrivned last --raw    # Print last transcript and copy raw (pre-cleaning) version to clipboard
+skrivned log           # Open the full transcript log
+```
+
+All sessions — including abandoned ones — are logged to `~/.config/skrivned/dictation_log.jsonl`. Each entry includes both raw and cleaned text, the detected project, and the dictation target (`ai_app`, `ai_cli`, or `general`).
 
 ## Configuration
 
@@ -109,29 +141,19 @@ Edit `~/.config/skrivned/config.json`:
 
 ```json
 {
-  "holdHotkey": { "keyCode": 63, "modifiers": [] },
-  "cleanHotkey": { "keyCode": 96, "modifiers": [] },
+  "hotkey": { "keyCode": 61, "modifiers": [] },
   "languageHints": ["en"]
 }
 ```
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `holdHotkey` | Globe/fn key (63) | Hold-to-speak key for normal dictation |
-| `cleanHotkey` | F5 (96) | Tap-to-toggle key for clean mode dictation |
+| `hotkey` | Right Option (61) | Tap-to-toggle dictation key |
 | `languageHints` | `["en"]` | Languages for Soniox recognition (e.g. `["en", "no"]`) |
-
-Set the hold hotkey from the CLI:
-
-```bash
-skrivned set-hotkey globe             # Globe/fn key (default)
-skrivned set-hotkey rightoption        # Right Option key
-skrivned set-hotkey ctrl+space         # Ctrl + Space
-```
 
 ### Vocabulary
 
-Skrivned supports custom vocabulary to improve transcription accuracy for proper nouns, technical terms, and domain-specific words. Vocabulary terms are sent to Soniox as context hints and also used by clean mode to correct spelling.
+Skrivned supports custom vocabulary to improve transcription accuracy for proper nouns, technical terms, and domain-specific words. Vocabulary terms are sent to Soniox as context hints and also used by post-processing to correct spelling.
 
 Edit `~/.config/skrivned/vocabulary.json`:
 
@@ -159,7 +181,7 @@ Edit `~/.config/skrivned/vocabulary.json`:
 - **`global`** — terms used in all dictation sessions regardless of context.
 - **`projects`** — project-specific terms, keyed by project name. These are only included when the matching project is detected (see Project Detection below).
 
-Project-specific terms take priority and are listed before global terms. The combined list is capped at ~9,000 characters for the Soniox API. Clean mode uses the full uncapped list.
+Project-specific terms take priority and are listed before global terms. The combined list is capped at ~9,000 characters for the Soniox API. Post-processing uses the full uncapped list.
 
 You can also edit vocabulary from the menubar: click the Skrivned icon → "Edit Vocabulary".
 
@@ -212,6 +234,23 @@ Project detection only works when iTerm2 is the frontmost application.
 "Create a skrivned project called 'api-server' for ~/src/api-server with terms: FastAPI, Pydantic, SQLAlchemy"
 ```
 
+### Smart cleaning (AI target detection)
+
+When you dictate into AI tools, Gemini post-processing is automatically skipped. This saves 1–3 seconds of latency and avoids the risk of the cleaning step removing intentional content (e.g. code-switching between languages, modern slang like "vibe code").
+
+Detection works by checking the frontmost application at session start:
+
+| Target | Detection method | Cleaning |
+|--------|-----------------|----------|
+| Claude desktop app | Bundle ID (`com.anthropic.claudefordesktop`) | Skipped |
+| Claude Code / Codex in iTerm2 | iTerm2 session name (e.g. `"⠂ Claude Code ..."`) | Skipped |
+| Claude Code / Codex in other terminals | Not yet detected (falls back to general) | Applied |
+| All other apps (Slack, browser, etc.) | Default | Applied |
+
+Note: Claude Code runs under `caffeinate` to prevent system sleep, so the terminal's foreground job name is `"caffeinate"`, not `"claude"`. Detection uses the iTerm2 session name instead, which Claude Code sets to include `"Claude Code"` in the title.
+
+The detected target is logged in `dictation_log.jsonl` so you can verify the behavior over time.
+
 ### Configuration files summary
 
 | File | Purpose |
@@ -221,6 +260,7 @@ Project detection only works when iTerm2 is the frontmost application.
 | `~/.config/skrivned/vocabulary.json` | Global and project-specific vocabulary |
 | `~/.config/skrivned/projects.json` | Project path detection mappings |
 | `~/.config/skrivned/skrivned.log` | Runtime log (truncated on each launch) |
+| `~/.config/skrivned/dictation_log.jsonl` | Raw and cleaned text pairs for analysis |
 
 ## Auto-start on login
 
@@ -259,17 +299,18 @@ launchctl load ~/Library/LaunchAgents/com.skrivned.agent.plist
 | File | Responsibility |
 |------|---------------|
 | `main.swift` | CLI entry point, argument parsing |
-| `AppDelegate.swift` | Session orchestration, hotkey → record → transcribe → insert flow |
+| `AppDelegate.swift` | Session orchestration, hotkey → record → transcribe → clean → insert flow |
 | `Config.swift` | Configuration and API key loading |
 | `Vocabulary.swift` | Global + project-specific vocabulary management |
-| `ProjectDetector.swift` | iTerm2 working directory detection via AppleScript |
+| `ProjectDetector.swift` | iTerm2 working directory detection + AI target detection (bundle ID, job name) |
 | `HotkeyManager.swift` | Global hotkey capture via CGEventTap |
-| `AudioStreamer.swift` | Microphone capture via AVAudioEngine (16kHz mono PCM) |
+| `AudioStreamer.swift` | Microphone capture via AVAudioEngine (16kHz mono PCM, pre-warmed, debounced auto-reset on sleep/wake and device changes) |
 | `SonioxTranscriber.swift` | WebSocket client for Soniox streaming STT |
 | `TextInserter.swift` | Text insertion via CGEvent keystroke simulation |
-| `TextCleaner.swift` | Gemini Flash API for filler word removal and grammar cleanup |
+| `TextCleaner.swift` | Gemini Flash API for filler removal, grammar, paragraph formatting, proper nouns |
+| `DictationLog.swift` | JSONL logging of raw/cleaned text pairs with project and target metadata |
 | `StatusBarController.swift` | Menubar icon, state display, and context menu |
-| `FloatingIndicator.swift` | Pulsing colored orb overlay (red=dictating, blue=clean recording, yellow=processing) |
+| `FloatingIndicator.swift` | Floating preview panel with live transcription and pulsing status dot |
 | `KeyCodes.swift` | Key name ↔ keycode mapping |
 | `Permissions.swift` | Accessibility and microphone permission checks |
 | `Log.swift` | File-based logging |

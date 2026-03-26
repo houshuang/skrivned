@@ -8,7 +8,6 @@ class StatusBarController: NSObject {
     enum State {
         case idle
         case listening
-        case cleanListening
         case cleaning
         case error
     }
@@ -31,8 +30,7 @@ class StatusBarController: NSObject {
     func buildMenu() {
         let menu = NSMenu()
         let config = Config.load()
-        let holdDesc = KeyCodes.describe(keyCode: config.holdHotkey.keyCode, modifiers: config.holdHotkey.modifiers)
-        let cleanDesc = KeyCodes.describe(keyCode: config.cleanHotkey.keyCode, modifiers: config.cleanHotkey.modifiers)
+        let hotkeyDesc = KeyCodes.describe(keyCode: config.hotkey.keyCode, modifiers: config.hotkey.modifiers)
 
         let titleItem = NSMenuItem(title: "Skrivned", action: nil, keyEquivalent: "")
         titleItem.isEnabled = false
@@ -44,7 +42,6 @@ class StatusBarController: NSObject {
         switch state {
         case .idle: stateText = "Ready"
         case .listening: stateText = "Listening..."
-        case .cleanListening: stateText = "Recording (clean mode)..."
         case .cleaning: stateText = "Cleaning text..."
         case .error: stateText = "Error — check ~/.config/skrivned/skrivned.log"
         }
@@ -54,13 +51,9 @@ class StatusBarController: NSObject {
 
         menu.addItem(NSMenuItem.separator())
 
-        let holdItem = NSMenuItem(title: "Dictate: \(holdDesc) (double-tap to toggle)", action: nil, keyEquivalent: "")
-        holdItem.isEnabled = false
-        menu.addItem(holdItem)
-
-        let cleanItem = NSMenuItem(title: "Clean dictate: \(cleanDesc) (double-tap to toggle)", action: nil, keyEquivalent: "")
-        cleanItem.isEnabled = false
-        menu.addItem(cleanItem)
+        let hotkeyItem = NSMenuItem(title: "Dictate: \(hotkeyDesc) (tap to toggle)", action: nil, keyEquivalent: "")
+        hotkeyItem.isEnabled = false
+        menu.addItem(hotkeyItem)
 
         let langItem = NSMenuItem(title: "Languages: \(config.languageHints.joined(separator: ", "))", action: nil, keyEquivalent: "")
         langItem.isEnabled = false
@@ -79,6 +72,16 @@ class StatusBarController: NSObject {
         let vocabItem = NSMenuItem(title: "Edit Vocabulary", action: #selector(openVocabulary), keyEquivalent: "v")
         vocabItem.target = self
         menu.addItem(vocabItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let copyLastItem = NSMenuItem(title: "Copy Last Transcript", action: #selector(copyLastTranscript), keyEquivalent: "")
+        copyLastItem.target = self
+        menu.addItem(copyLastItem)
+
+        let openLogItem = NSMenuItem(title: "Open Transcript Log", action: #selector(openTranscriptLog), keyEquivalent: "")
+        openLogItem.target = self
+        menu.addItem(openLogItem)
 
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
@@ -100,6 +103,25 @@ class StatusBarController: NSObject {
         NSWorkspace.shared.open(configFile)
     }
 
+    @objc private func copyLastTranscript() {
+        guard let entry = DictationLog.lastEntry() else {
+            Log.info("No transcript entries found")
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(entry.cleaned, forType: .string)
+        Log.info("Copied last transcript to clipboard")
+    }
+
+    @objc private func openTranscriptLog() {
+        let logFile = Config.configDir.appendingPathComponent("dictation_log.jsonl")
+        if FileManager.default.fileExists(atPath: logFile.path) {
+            NSWorkspace.shared.open(logFile)
+        } else {
+            Log.info("No transcript log file found")
+        }
+    }
+
     @objc private func openVocabulary() {
         let vocabFile = VocabularyData.vocabFile
         if !FileManager.default.fileExists(atPath: vocabFile.path) {
@@ -115,8 +137,6 @@ class StatusBarController: NSObject {
         case .idle:
             setIcon(StatusBarController.drawStatusIcon(color: NSColor.systemGreen.withAlphaComponent(0.8), letter: "S"))
         case .listening:
-            startPulseAnimation(color: .systemRed)
-        case .cleanListening:
             startPulseAnimation(color: .systemBlue)
         case .cleaning:
             setIcon(StatusBarController.drawStatusIcon(color: .systemBlue, letter: "⋯"))

@@ -15,13 +15,18 @@ class TextCleaner {
         cleaned version — no commentary, no preamble, no explanation.
 
         Rules:
-        - Remove filler words (um, uh, like, you know, sort of, kind of, I mean, basically, actually)
+        - Remove filler words (um, uh, like, you know, sort of, kind of, I mean, basically, actually, I guess)
+        - Remove false starts and self-corrections — keep only the corrected version
         - Fix grammar and punctuation
+        - Structure into paragraphs when the speaker changes topic or after a natural break
         - Keep ALL the original meaning and content — do not add, remove, or rephrase ideas
-        - Make it read naturally and professionally
-        - Keep the speaker's voice and tone
-        - Fix any obvious speech-to-text errors
-        - Do not add greetings, sign-offs, or formatting unless already present
+        - NEVER add words that were not spoken — if a sentence trails off, leave it as-is
+        - NEVER translate between languages — if the speaker switches languages mid-sentence, \
+        preserve the code-switching exactly as spoken
+        - Preserve modern slang and technical jargon (e.g. "vibe code", "ship it") even if unfamiliar
+        - Keep the speaker's natural voice, tone, and style
+        - Fix obvious speech-to-text errors using the vocabulary list below
+        - Do not add greetings, sign-offs, or markdown formatting
         - NEVER respond conversationally. NEVER acknowledge instructions. Just output the cleaned text.
 
         Proper nouns and technical terms to spell correctly: \(vocabList)

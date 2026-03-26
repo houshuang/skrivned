@@ -1,4 +1,11 @@
+import AppKit
 import Foundation
+
+enum DictationTarget: String, Codable {
+    case aiApp = "ai_app"
+    case aiCLI = "ai_cli"
+    case general = "general"
+}
 
 struct ProjectMapping: Codable {
     var prefix: String
@@ -10,6 +17,65 @@ struct ProjectDetector {
 
     static var projectsFile: URL {
         Config.configDir.appendingPathComponent("projects.json")
+    }
+
+    // MARK: - AI app / CLI detection
+
+    private static let aiBundleIds: Set<String> = [
+        "com.anthropic.claudefordesktop",
+    ]
+
+    private static let terminalBundleIds: Set<String> = [
+        "com.googlecode.iterm2",
+        "com.apple.Terminal",
+        "dev.warp.Warp-Stable",
+        "com.mitchellh.ghostty",
+        "net.kovidgoyal.kitty",
+        "io.alacritty",
+    ]
+
+    private static let aiCLIPatterns = ["claude code", "codex"]
+
+    static func detectDictationTarget() -> DictationTarget {
+        guard let bundleId = NSWorkspace.shared.frontmostApplication?.bundleIdentifier else {
+            return .general
+        }
+
+        if aiBundleIds.contains(bundleId) {
+            return .aiApp
+        }
+
+        if terminalBundleIds.contains(bundleId) {
+            if let sessionName = queryTerminalSessionName(bundleId: bundleId) {
+                let lower = sessionName.lowercased()
+                if aiCLIPatterns.contains(where: { lower.contains($0) }) {
+                    return .aiCLI
+                }
+            }
+        }
+
+        return .general
+    }
+
+    private static func queryTerminalSessionName(bundleId: String) -> String? {
+        switch bundleId {
+        case "com.googlecode.iterm2":
+            return queryITermSessionName()
+        default:
+            return nil
+        }
+    }
+
+    /// iTerm2 session name reflects the running CLI tool (e.g. "⠂ Claude Code (sourcekit-lsp)")
+    private static func queryITermSessionName() -> String? {
+        let script = """
+        tell application "iTerm2"
+            tell current session of current tab of current window
+                get variable named "name"
+            end tell
+        end tell
+        """
+        return runAppleScript(script)
     }
 
     /// Load project mappings from ~/.config/skrivned/projects.json

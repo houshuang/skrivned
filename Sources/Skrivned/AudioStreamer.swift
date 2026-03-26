@@ -1,17 +1,26 @@
+import AppKit
 import AVFoundation
 import Foundation
 
 class AudioStreamer {
-    private var audioEngine: AVAudioEngine?
+    private var audioEngine: AVAudioEngine
     private var isStreaming = false
+    private var isPrepared = false
+    private var resetWorkItem: DispatchWorkItem?
     var onAudioData: ((Data) -> Void)?
 
-    func start() throws {
-        guard !isStreaming else { return }
+    init() {
+        audioEngine = AVAudioEngine()
+        observeAudioConfigChanges()
+    }
 
-        let engine = AVAudioEngine()
-        let inputNode = engine.inputNode
+    /// Pre-allocate audio resources so start() is fast.
+    /// Call once during app setup (after microphone permission is granted).
+    func prepare() {
+        guard !isPrepared else { return }
+        let inputNode = audioEngine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
+        Log.info("Audio input format: \(inputFormat)")
 
         let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
@@ -23,7 +32,7 @@ class AudioStreamer {
         let converter = AVAudioConverter(from: inputFormat, to: targetFormat)
 
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
-            guard let self = self, let converter = converter else { return }
+            guard let self = self, self.isStreaming, let converter = converter else { return }
 
             let ratio = 16000.0 / inputFormat.sampleRate
             let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio)
@@ -43,19 +52,77 @@ class AudioStreamer {
             }
         }
 
-        engine.prepare()
-        try engine.start()
+        audioEngine.prepare()
+        isPrepared = true
+        Log.info("Audio engine prepared")
+    }
 
-        audioEngine = engine
+    func start() throws {
+        guard !isStreaming else { return }
+        if !isPrepared { prepare() }
+        try audioEngine.start()
         isStreaming = true
     }
 
     func stop() {
         guard isStreaming else { return }
-        audioEngine?.inputNode.removeTap(onBus: 0)
-        audioEngine?.stop()
-        audioEngine = nil
         isStreaming = false
+        audioEngine.pause()
+    }
+
+    /// Reset the audio engine after config changes (device switch, sleep/wake).
+    /// Next call to start() will re-prepare with the new device config.
+    private func resetEngine() {
+        let wasStreaming = isStreaming
+        if isStreaming {
+            isStreaming = false
+        }
+        // Remove old observers before creating a new engine
+        NotificationCenter.default.removeObserver(self, name: .AVAudioEngineConfigurationChange, object: audioEngine)
+        audioEngine.stop()
+        audioEngine.inputNode.removeTap(onBus: 0)
+        isPrepared = false
+        audioEngine = AVAudioEngine()
+        // Re-observe on the new engine instance only
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleConfigChange),
+            name: .AVAudioEngineConfigurationChange,
+            object: audioEngine
+        )
+        Log.info("Audio engine reset (wasStreaming=\(wasStreaming))")
+    }
+
+    private func observeAudioConfigChanges() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleConfigChange),
+            name: .AVAudioEngineConfigurationChange,
+            object: audioEngine
+        )
+        // Also reset after system wake — AVAudioEngine often goes stale
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleWake),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
+    }
+
+    @objc private func handleConfigChange(_ notification: Notification) {
+        Log.info("Audio config changed — resetting engine")
+        resetEngine()
+    }
+
+    @objc private func handleWake(_ notification: Notification) {
+        // Debounce: multiple wake notifications can fire in rapid succession
+        resetWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            Log.info("System wake — resetting audio engine")
+            self?.resetEngine()
+        }
+        resetWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
     }
 
     private func float32ToInt16(_ buffer: AVAudioPCMBuffer) -> Data {
@@ -72,5 +139,10 @@ class AudioStreamer {
         }
 
         return int16Data
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
     }
 }

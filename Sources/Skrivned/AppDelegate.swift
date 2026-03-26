@@ -11,20 +11,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, SonioxTranscriberDelegate {
     var vocabulary: VocabularyData!
     var floatingIndicator: FloatingIndicator!
 
-    private var isHolding = false
-    private var isToggled = false
-    private var isCleanMode = false
+    private var isDictating = false
     private var isReady = false
-    private var lastHoldKeyUpTime: Date?
-    private var holdReleaseTimer: Timer?
-    private var cleanAccumulator = ""
+    private var textAccumulator = ""
     private var activeProject: String?
-    private let doubleTapInterval: TimeInterval = 0.3
+    private var activeTarget: DictationTarget = .general
+    private var insertionCancelled = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.info("App launching")
         statusBar = StatusBarController()
         floatingIndicator = FloatingIndicator()
+        floatingIndicator.onClose = { [weak self] in self?.abandonSession() }
         audioStreamer = AudioStreamer()
         inserter = TextInserter()
 
@@ -57,12 +55,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, SonioxTranscriberDelegate {
 
         if let geminiKey = Config.loadGeminiKey() {
             textCleaner = TextCleaner(apiKey: geminiKey)
-            Log.info("Gemini key loaded — clean mode available")
+            Log.info("Gemini key loaded — post-processing enabled")
         } else {
-            Log.info("No GEMINI_KEY in .env — clean mode disabled")
+            Log.info("No GEMINI_KEY in .env — will insert raw transcription")
         }
 
         Permissions.ensureMicrophone()
+        audioStreamer.prepare()
 
         if !AXIsProcessTrusted() {
             Log.info("Accessibility: not granted, waiting...")
@@ -84,16 +83,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, SonioxTranscriberDelegate {
     private func startListening() {
         let manager = HotkeyManager()
         manager.addBinding(
-            keyCode: config.holdHotkey.keyCode,
-            modifiers: config.holdHotkey.modifierFlags,
-            onKeyDown: { [weak self] in self?.handleHoldDown() },
-            onKeyUp: { [weak self] in self?.handleHoldUp() }
-        )
-        manager.addBinding(
-            keyCode: config.cleanHotkey.keyCode,
-            modifiers: config.cleanHotkey.modifierFlags,
-            onKeyDown: { [weak self] in self?.handleCleanDown() },
-            onKeyUp: { [weak self] in self?.handleCleanUp() }
+            keyCode: config.hotkey.keyCode,
+            modifiers: config.hotkey.modifierFlags,
+            onKeyDown: { [weak self] in self?.handleHotkeyDown() },
+            onKeyUp: { }
         )
         manager.start()
         hotkeyManager = manager
@@ -102,9 +95,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, SonioxTranscriberDelegate {
         statusBar.state = .idle
         statusBar.buildMenu()
 
-        let holdDesc = KeyCodes.describe(keyCode: config.holdHotkey.keyCode, modifiers: config.holdHotkey.modifiers)
-        let cleanDesc = KeyCodes.describe(keyCode: config.cleanHotkey.keyCode, modifiers: config.cleanHotkey.modifiers)
-        Log.info("Ready — hold \(holdDesc) to dictate, \(cleanDesc) for clean mode")
+        let desc = KeyCodes.describe(keyCode: config.hotkey.keyCode, modifiers: config.hotkey.modifiers)
+        Log.info("Ready — \(desc) to dictate")
     }
 
     func reloadConfig() {
@@ -116,7 +108,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, SonioxTranscriberDelegate {
             return
         }
 
-        stopSession()
+        finishSession()
         hotkeyManager?.stop()
 
         transcriber = SonioxTranscriber(apiKey: apiKey, languageHints: config.languageHints)
@@ -133,145 +125,81 @@ class AppDelegate: NSObject, NSApplicationDelegate, SonioxTranscriberDelegate {
         Log.info("Config reloaded")
     }
 
-    // MARK: - Hold with double-tap toggle (normal dictation)
+    // MARK: - Hotkey toggle (tap to start, tap to stop)
 
-    private func handleHoldDown() {
-        guard isReady, !isCleanMode else { return }
+    private func handleHotkeyDown() {
+        guard isReady else { return }
 
-        holdReleaseTimer?.invalidate()
-        holdReleaseTimer = nil
+        Log.info("Hotkey DOWN — isDictating=\(isDictating)")
 
-        let isDoubleTap: Bool
-        if let lastUp = lastHoldKeyUpTime, Date().timeIntervalSince(lastUp) < doubleTapInterval {
-            isDoubleTap = true
+        if isDictating {
+            finishSession()
         } else {
-            isDoubleTap = false
+            isDictating = true
+            startSession()
         }
-
-        Log.info("Hold DOWN — doubleTap=\(isDoubleTap) isHolding=\(isHolding) isToggled=\(isToggled)")
-
-        if isToggled {
-            isToggled = false
-            floatingIndicator.hide()
-            stopSession()
-        } else if isDoubleTap {
-            isHolding = false
-            isToggled = true
-            floatingIndicator.show()
-        } else {
-            isHolding = true
-            startSession(clean: false)
-        }
-    }
-
-    private func handleHoldUp() {
-        lastHoldKeyUpTime = Date()
-        Log.info("Hold UP — isHolding=\(isHolding) isToggled=\(isToggled)")
-
-        if isHolding {
-            isHolding = false
-            holdReleaseTimer = Timer.scheduledTimer(withTimeInterval: doubleTapInterval, repeats: false) { [weak self] _ in
-                self?.holdReleaseTimer = nil
-                self?.stopSession()
-            }
-        }
-    }
-
-    // MARK: - Clean mode (toggle: tap on, tap off)
-
-    private func handleCleanDown() {
-        guard isReady, !isHolding else { return }
-
-        // If normal toggle is active, ignore clean key
-        if isToggled && !isCleanMode { return }
-
-        guard textCleaner != nil else {
-            Log.error("Clean mode: no GEMINI_KEY configured")
-            return
-        }
-
-        Log.info("Clean DOWN — isCleanMode=\(isCleanMode)")
-
-        if isCleanMode {
-            // Second tap: stop recording and clean
-            // Keep isCleanMode=true until finalization completes so late tokens accumulate
-            stopCleanSession()
-        } else {
-            // First tap: start recording
-            isCleanMode = true
-            floatingIndicator.show(color: .systemBlue)
-            startSession(clean: true)
-        }
-    }
-
-    private func handleCleanUp() {
-        // Nothing to do on key up for toggle mode
     }
 
     // MARK: - Session management
 
-    private func startSession(clean: Bool) {
-        // Detect project from iTerm2
-        activeProject = ProjectDetector.detectProject()
-        if let proj = activeProject {
-            Log.info("Detected project: \(proj)")
-        }
+    private var isRecording: Bool {
+        isDictating
+    }
 
-        let terms = vocabulary.sonioxTerms(project: activeProject)
-
-        if clean {
-            isCleanMode = true
-            cleanAccumulator = ""
-            Log.info("Session START (clean mode, \(terms.count) terms)")
-            statusBar.state = .cleanListening
-        } else {
-            Log.info("Session START (\(terms.count) terms)")
-            statusBar.state = .listening
-        }
-
-        transcriber.connect(terms: terms)
+    private func startSession() {
+        // Start audio FIRST — every millisecond of delay loses speech
         do {
             try audioStreamer.start()
             Log.info("Audio streaming started")
         } catch {
             Log.error("Audio error: \(error.localizedDescription)")
             statusBar.state = .error
-            transcriber.disconnect()
-            isCleanMode = false
+            return
         }
-    }
 
-    private func stopSession() {
-        Log.info("Session STOP")
-        audioStreamer.stop()
-        transcriber.finalize { [weak self] in
-            self?.transcriber.disconnect()
-            DispatchQueue.main.async {
-                self?.statusBar.state = .idle
-                Log.info("Session ended, idle")
+        textAccumulator = ""
+        insertionCancelled = false
+        statusBar.state = .listening
+        floatingIndicator.show(color: .systemBlue)
+
+        // Project + target detection + WS connect run after audio is already capturing
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { return }
+
+            let target = ProjectDetector.detectDictationTarget()
+            self.activeTarget = target
+
+            let project = ProjectDetector.detectProject()
+            self.activeProject = project
+
+            if let proj = project {
+                Log.info("Detected project: \(proj)")
             }
+            Log.info("Dictation target: \(target.rawValue)")
+
+            let terms = self.vocabulary.sonioxTerms(project: self.activeProject)
+            Log.info("Session START (\(terms.count) terms)")
+            self.transcriber.connect(terms: terms)
         }
     }
 
-    private func stopCleanSession() {
-        Log.info("Clean session STOP — accumulated \(cleanAccumulator.count) chars")
+    private func finishSession() {
+        Log.info("Session STOP — accumulated \(textAccumulator.count) chars")
         audioStreamer.stop()
 
-        // Switch indicator to yellow while LLM processes
-        DispatchQueue.main.async {
-            self.floatingIndicator.changeColor(.systemYellow)
-            self.statusBar.state = .cleaning
-        }
+        floatingIndicator.showProcessing()
+        statusBar.state = .cleaning
 
         transcriber.finalize { [weak self] in
             self?.transcriber.disconnect()
 
             guard let self = self else { return }
-            let text = self.cleanAccumulator
-            self.isCleanMode = false
+            let rawText = self.textAccumulator
+            self.textAccumulator = ""
+            self.isDictating = false
 
-            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                Log.info("Clean mode: nothing to clean")
+            guard !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                Log.info("Nothing to insert")
                 DispatchQueue.main.async {
                     self.floatingIndicator.hide()
                     self.statusBar.state = .idle
@@ -280,25 +208,76 @@ class AppDelegate: NSObject, NSApplicationDelegate, SonioxTranscriberDelegate {
             }
 
             let allTerms = self.vocabulary.allTerms(project: self.activeProject)
-            self.textCleaner?.clean(text: text, vocabulary: allTerms) { [weak self] cleaned in
-                self?.inserter.insert(text: cleaned)
+            let project = self.activeProject
+            let target = self.activeTarget
+            let skipCleaning = target == .aiApp || target == .aiCLI
+
+            if let cleaner = self.textCleaner, !skipCleaning {
+                cleaner.clean(text: rawText, vocabulary: allTerms) { [weak self] cleaned in
+                    guard let self = self else { return }
+                    if self.insertionCancelled {
+                        DispatchQueue.main.async {
+                            self.floatingIndicator.hide()
+                            self.statusBar.state = .idle
+                        }
+                        return
+                    }
+                    DictationLog.record(raw: rawText, cleaned: cleaned, project: project, target: target)
+                    self.inserter.insert(text: cleaned)
+                    DispatchQueue.main.async {
+                        self.floatingIndicator.hide()
+                        self.statusBar.state = .idle
+                        Log.info("Cleaned text inserted, idle")
+                    }
+                }
+            } else {
+                if self.insertionCancelled {
+                    DispatchQueue.main.async {
+                        self.floatingIndicator.hide()
+                        self.statusBar.state = .idle
+                    }
+                    return
+                }
+                let reason = skipCleaning ? "AI target: \(target.rawValue)" : "no Gemini key"
+                DictationLog.record(raw: rawText, cleaned: rawText, project: project, target: target)
+                self.inserter.insert(text: rawText)
                 DispatchQueue.main.async {
-                    self?.floatingIndicator.hide()
-                    self?.statusBar.state = .idle
-                    Log.info("Clean text inserted, idle")
+                    self.floatingIndicator.hide()
+                    self.statusBar.state = .idle
+                    Log.info("Raw text inserted (\(reason)), idle")
                 }
             }
         }
     }
 
+    func abandonSession() {
+        Log.info("Session ABANDONED — accumulated \(textAccumulator.count) chars")
+        audioStreamer.stop()
+        transcriber?.disconnect()
+
+        let rawText = textAccumulator
+        textAccumulator = ""
+        isDictating = false
+        insertionCancelled = true
+
+        if !rawText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            DictationLog.record(raw: rawText, cleaned: "(abandoned)", project: activeProject, target: activeTarget)
+        }
+
+        DispatchQueue.main.async {
+            self.floatingIndicator.hide()
+            self.statusBar.state = .idle
+        }
+    }
+
     // MARK: - SonioxTranscriberDelegate
 
-    func transcriber(_ transcriber: SonioxTranscriber, didProduceText text: String) {
-        if isCleanMode {
-            cleanAccumulator += text
-        } else {
-            inserter.insert(text: text)
-        }
+    func transcriber(_ transcriber: SonioxTranscriber, didProduceFinalText text: String) {
+        textAccumulator += text
+    }
+
+    func transcriber(_ transcriber: SonioxTranscriber, didUpdatePreview finalText: String, tentative: String) {
+        floatingIndicator.updateText(final: finalText, tentative: tentative)
     }
 
     func transcriber(_ transcriber: SonioxTranscriber, didChangeState connected: Bool) {

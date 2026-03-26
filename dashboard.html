@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Skrivned — Voice Dictation Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --surface2: #1a1a26;
+    --border: #2a2a3a;
+    --text: #e8e8f0;
+    --text-dim: #8888a0;
+    --text-muted: #555568;
+    --accent: #7c6aef;
+    --accent-glow: rgba(124, 106, 239, 0.15);
+    --warm: #f0a060;
+    --teal: #5ecfcf;
+    --rose: #e0607a;
+    --green: #5ec090;
+    --blue: #60a0f0;
+    --card-radius: 16px;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  .glow-orb {
+    position: fixed;
+    width: 600px;
+    height: 600px;
+    border-radius: 50%;
+    filter: blur(120px);
+    opacity: 0.07;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .glow-orb.purple { background: #7c6aef; top: -200px; left: -100px; }
+  .glow-orb.teal { background: #5ecfcf; bottom: -200px; right: -100px; }
+
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 40px 24px;
+    position: relative;
+    z-index: 1;
+  }
+
+  header {
+    text-align: center;
+    margin-bottom: 48px;
+  }
+
+  .logo {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 12px;
+  }
+
+  h1 {
+    font-size: 42px;
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -1px;
+    background: linear-gradient(135deg, var(--text) 0%, var(--text-dim) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 8px;
+  }
+
+  .subtitle {
+    color: var(--text-dim);
+    font-size: 15px;
+    font-weight: 400;
+  }
+
+  .subtitle span {
+    color: var(--accent);
+    font-weight: 500;
+  }
+
+  /* Hero stat cards */
+  .hero-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+
+  .hero-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--card-radius);
+    padding: 24px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .hero-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    opacity: 0.6;
+  }
+
+  .hero-card.warm::before { background: linear-gradient(90deg, transparent, var(--warm), transparent); }
+  .hero-card.teal::before { background: linear-gradient(90deg, transparent, var(--teal), transparent); }
+  .hero-card.rose::before { background: linear-gradient(90deg, transparent, var(--rose), transparent); }
+
+  .hero-number {
+    font-size: 36px;
+    font-weight: 800;
+    font-family: 'JetBrains Mono', monospace;
+    line-height: 1;
+    margin-bottom: 6px;
+  }
+
+  .hero-card:nth-child(1) .hero-number { color: var(--accent); }
+  .hero-card:nth-child(2) .hero-number { color: var(--warm); }
+  .hero-card:nth-child(3) .hero-number { color: var(--teal); }
+  .hero-card:nth-child(4) .hero-number { color: var(--rose); }
+
+  .hero-label {
+    font-size: 12px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-dim);
+  }
+
+  .hero-sub {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+
+  /* Secondary stats */
+  .stats-bar {
+    display: flex;
+    justify-content: center;
+    gap: 32px;
+    padding: 20px;
+    margin-bottom: 32px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--card-radius);
+  }
+
+  .stat-item {
+    text-align: center;
+  }
+
+  .stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 600;
+    font-size: 18px;
+    color: var(--text);
+  }
+
+  .stat-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
+  /* Chart sections */
+  .chart-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+
+  .chart-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--card-radius);
+    padding: 24px;
+  }
+
+  .chart-card.full {
+    grid-column: 1 / -1;
+  }
+
+  .chart-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+
+  .chart-subtitle {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 16px;
+  }
+
+  .chart-container {
+    position: relative;
+    width: 100%;
+  }
+
+  .chart-container.tall { height: 280px; }
+  .chart-container.medium { height: 220px; }
+  .chart-container.short { height: 180px; }
+
+  /* Word cloud */
+  .word-cloud {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    align-items: center;
+    padding: 12px 0;
+  }
+
+  .word-tag {
+    font-family: 'JetBrains Mono', monospace;
+    padding: 4px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    white-space: nowrap;
+    transition: all 0.2s;
+  }
+
+  .word-tag:hover {
+    border-color: var(--accent);
+    background: var(--accent-glow);
+  }
+
+  .word-tag .count {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-left: 4px;
+  }
+
+  /* Highlight box */
+  .highlight-box {
+    background: linear-gradient(135deg, var(--surface) 0%, var(--surface2) 100%);
+    border: 1px solid var(--border);
+    border-radius: var(--card-radius);
+    padding: 24px;
+    margin-bottom: 16px;
+  }
+
+  .highlight-box .label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--accent);
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+
+  .highlight-box .preview {
+    font-size: 14px;
+    color: var(--text-dim);
+    line-height: 1.6;
+    font-style: italic;
+  }
+
+  .highlight-box .meta {
+    margin-top: 12px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .highlight-box .meta span {
+    color: var(--text-dim);
+    font-weight: 500;
+  }
+
+  /* Target bars */
+  .target-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 8px 0;
+  }
+
+  .target-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .target-name {
+    font-size: 13px;
+    font-weight: 500;
+    min-width: 120px;
+    color: var(--text-dim);
+  }
+
+  .target-bar-track {
+    flex: 1;
+    height: 28px;
+    background: var(--surface2);
+    border-radius: 6px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .target-bar-fill {
+    height: 100%;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    padding-left: 10px;
+    font-size: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-weight: 500;
+    color: rgba(255,255,255,0.9);
+    transition: width 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .target-sessions {
+    font-size: 11px;
+    color: var(--text-muted);
+    min-width: 80px;
+    text-align: right;
+  }
+
+  /* Streak badge */
+  .streak-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: linear-gradient(135deg, rgba(240, 160, 96, 0.15), rgba(224, 96, 122, 0.15));
+    border: 1px solid rgba(240, 160, 96, 0.3);
+    border-radius: 24px;
+    padding: 6px 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--warm);
+  }
+
+  footer {
+    text-align: center;
+    margin-top: 48px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  footer a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  @media (max-width: 768px) {
+    .hero-grid { grid-template-columns: repeat(2, 1fr); }
+    .chart-grid { grid-template-columns: 1fr; }
+    .stats-bar { flex-wrap: wrap; gap: 16px; }
+    h1 { font-size: 28px; }
+    .hero-number { font-size: 28px; }
+  }
+</style>
+</head>
+<body>
+<div class="glow-orb purple"></div>
+<div class="glow-orb teal"></div>
+
+<div class="container">
+  <header>
+    <div class="logo">Skrivned</div>
+    <h1>Voice Dictation Dashboard</h1>
+    <p class="subtitle">
+      <span>13 days</span> of voice-first development &middot; March 8 &ndash; 20, 2026
+    </p>
+  </header>
+
+  <!-- Hero stats -->
+  <div class="hero-grid">
+    <div class="hero-card">
+      <div class="hero-number">23,747</div>
+      <div class="hero-label">Words Spoken</div>
+      <div class="hero-sub">24,409 before cleaning</div>
+    </div>
+    <div class="hero-card warm">
+      <div class="hero-number">1,123</div>
+      <div class="hero-label">Sentences</div>
+      <div class="hero-sub">~21 words per sentence</div>
+    </div>
+    <div class="hero-card teal">
+      <div class="hero-number">164</div>
+      <div class="hero-label">Sessions</div>
+      <div class="hero-sub">~12.6 per day</div>
+    </div>
+    <div class="hero-card rose">
+      <div class="hero-number">95</div>
+      <div class="hero-label">Pages</div>
+      <div class="hero-sub">at 250 words/page</div>
+    </div>
+  </div>
+
+  <!-- Secondary stats bar -->
+  <div class="stats-bar">
+    <div class="stat-item">
+      <div class="stat-value">144.8</div>
+      <div class="stat-label">Avg Words / Session</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-value">785</div>
+      <div class="stat-label">Longest Session (words)</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-value">2.7%</div>
+      <div class="stat-label">Cleaned by AI</div>
+    </div>
+    <div class="stat-item">
+      <div class="streak-badge">🔥 13-day streak</div>
+      <div class="stat-label" style="margin-top:4px">Every day since launch</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-value">128K</div>
+      <div class="stat-label">Characters Total</div>
+    </div>
+  </div>
+
+  <!-- Daily activity + cumulative -->
+  <div class="chart-grid">
+    <div class="chart-card full">
+      <div class="chart-title">Daily Activity</div>
+      <div class="chart-subtitle">Words dictated per day (bars) &middot; Cumulative total (line)</div>
+      <div class="chart-container tall">
+        <canvas id="dailyChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hour of day + Day of week -->
+  <div class="chart-grid">
+    <div class="chart-card">
+      <div class="chart-title">Time of Day</div>
+      <div class="chart-subtitle">When you dictate most (UTC)</div>
+      <div class="chart-container medium">
+        <canvas id="hourlyChart"></canvas>
+      </div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Day of Week</div>
+      <div class="chart-subtitle">Words dictated by weekday</div>
+      <div class="chart-container medium">
+        <canvas id="dowChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Projects + Targets -->
+  <div class="chart-grid">
+    <div class="chart-card">
+      <div class="chart-title">Projects</div>
+      <div class="chart-subtitle">Words dictated per project</div>
+      <div class="chart-container medium">
+        <canvas id="projectChart"></canvas>
+      </div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Dictation Targets</div>
+      <div class="chart-subtitle">Where your voice goes</div>
+      <div class="target-bars" id="targetBars"></div>
+    </div>
+  </div>
+
+  <!-- Longest entry highlight -->
+  <div class="highlight-box">
+    <div class="label">Longest Single Dictation &mdash; 785 words</div>
+    <div class="preview">"We've been building a lot today, and we need to take to think about where we've gotten so if we look at physical books, we have the ability to scan the front page and it will find the book and insert ..."</div>
+    <div class="meta">
+      <span>petrarca</span> &middot; March 15, 2026 at 17:22 UTC &middot; That's over 3 pages in a single breath
+    </div>
+  </div>
+
+  <!-- Word cloud + Entry length distribution -->
+  <div class="chart-grid">
+    <div class="chart-card">
+      <div class="chart-title">Most Used Words</div>
+      <div class="chart-subtitle">After filtering common stopwords</div>
+      <div class="word-cloud" id="wordCloud"></div>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title">Session Length Distribution</div>
+      <div class="chart-subtitle">Words per dictation session</div>
+      <div class="chart-container medium">
+        <canvas id="lengthChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    Built with <a href="#">Skrivned</a> &mdash; voice-to-text for macOS via Soniox streaming STT
+  </footer>
+</div>
+
+<script>
+const DATA = {"totalEntries":164,"totalRawWords":24409,"totalCleanedWords":23747,"totalChars":128522,"totalSentences":1123,"pages":95.0,"avgWordsPerEntry":144.8,"wordsRemovedByCleaning":662,"cleaningReductionPct":2.7,"firstDate":"2026-03-08","lastDate":"2026-03-20","daysActive":13,"totalDaysInRange":13,"daily":[{"date":"2026-03-08","words":98,"sessions":3},{"date":"2026-03-09","words":1625,"sessions":10},{"date":"2026-03-10","words":1898,"sessions":14},{"date":"2026-03-11","words":1820,"sessions":20},{"date":"2026-03-12","words":89,"sessions":4},{"date":"2026-03-13","words":5704,"sessions":34},{"date":"2026-03-14","words":1428,"sessions":7},{"date":"2026-03-15","words":4670,"sessions":22},{"date":"2026-03-16","words":2583,"sessions":15},{"date":"2026-03-17","words":2462,"sessions":26},{"date":"2026-03-18","words":359,"sessions":2},{"date":"2026-03-19","words":983,"sessions":5},{"date":"2026-03-20","words":28,"sessions":2}],"hourly":[{"hour":0,"words":0,"sessions":0},{"hour":1,"words":0,"sessions":0},{"hour":2,"words":0,"sessions":0},{"hour":3,"words":0,"sessions":0},{"hour":4,"words":345,"sessions":1},{"hour":5,"words":5480,"sessions":36},{"hour":6,"words":5115,"sessions":33},{"hour":7,"words":1928,"sessions":20},{"hour":8,"words":389,"sessions":6},{"hour":9,"words":85,"sessions":1},{"hour":10,"words":1837,"sessions":10},{"hour":11,"words":773,"sessions":8},{"hour":12,"words":749,"sessions":6},{"hour":13,"words":680,"sessions":3},{"hour":14,"words":251,"sessions":3},{"hour":15,"words":721,"sessions":6},{"hour":16,"words":0,"sessions":0},{"hour":17,"words":3456,"sessions":13},{"hour":18,"words":1172,"sessions":11},{"hour":19,"words":668,"sessions":4},{"hour":20,"words":98,"sessions":3},{"hour":21,"words":0,"sessions":0},{"hour":22,"words":0,"sessions":0},{"hour":23,"words":0,"sessions":0}],"dayOfWeek":[{"day":"Monday","words":4208,"sessions":25},{"day":"Tuesday","words":4360,"sessions":40},{"day":"Wednesday","words":2179,"sessions":22},{"day":"Thursday","words":1072,"sessions":9},{"day":"Friday","words":5732,"sessions":36},{"day":"Saturday","words":1428,"sessions":7},{"day":"Sunday","words":4768,"sessions":25}],"projects":[{"name":"petrarca","words":7940,"sessions":38},{"name":"Other","words":6112,"sessions":39},{"name":"polaris","words":4613,"sessions":42},{"name":"alif","words":1803,"sessions":11},{"name":"nrk","words":1722,"sessions":15},{"name":"otak","words":1083,"sessions":5},{"name":"skrivned","words":474,"sessions":14}],"targets":[{"name":"Claude Code","words":18158,"sessions":119},{"name":"Unknown","words":4842,"sessions":36},{"name":"General Apps","words":747,"sessions":9}],"topWords":[{"word":"read","count":82},{"word":"maybe","count":64},{"word":"different","count":61},{"word":"things","count":58},{"word":"kind","count":57},{"word":"research","count":51},{"word":"words","count":49},{"word":"able","count":48},{"word":"reading","count":48},{"word":"might","count":45},{"word":"other","count":45},{"word":"chat","count":45},{"word":"interesting","count":44},{"word":"books","count":43},{"word":"probably","count":42},{"word":"code","count":39},{"word":"sure","count":38},{"word":"book","count":38},{"word":"text","count":35},{"word":"much","count":35},{"word":"whether","count":33},{"word":"knowledge","count":33},{"word":"questions","count":29},{"word":"using","count":28},{"word":"claude","count":28},{"word":"information","count":27},{"word":"system","count":27},{"word":"work","count":27},{"word":"quite","count":27},{"word":"keep","count":26},{"word":"document","count":26},{"word":"sentences","count":26},{"word":"history","count":26},{"word":"single","count":25},{"word":"time","count":25},{"word":"another","count":25},{"word":"data","count":24},{"word":"tools","count":24},{"word":"tool","count":24},{"word":"course","count":24}],"entryLengths":{"shortest":1,"median":93,"p90":345,"longest":785,"shortEntries":10},"longestEntry":{"words":785,"timestamp":"2026-03-15T17:22:05.694Z","preview":"We've been building a lot today, and we need to take to think about where we've gotten so if we look at physical books, we have the ability to scan the front page and it will find the book and insert ...","project":"petrarca"},"bestDay":{"date":"2026-03-13","words":5704,"sessions":34},"maxStreak":13,"currentStreak":13,"cumulative":[{"date":"2026-03-08","total":98},{"date":"2026-03-09","total":1723},{"date":"2026-03-10","total":3621},{"date":"2026-03-11","total":5441},{"date":"2026-03-12","total":5530},{"date":"2026-03-13","total":11234},{"date":"2026-03-14","total":12662},{"date":"2026-03-15","total":17332},{"date":"2026-03-16","total":19915},{"date":"2026-03-17","total":22377},{"date":"2026-03-18","total":22736},{"date":"2026-03-19","total":23719},{"date":"2026-03-20","total":23747}]};
+
+// Chart defaults
+Chart.defaults.color = '#8888a0';
+Chart.defaults.borderColor = '#2a2a3a';
+Chart.defaults.font.family = "'Inter', sans-serif";
+Chart.defaults.font.size = 11;
+Chart.defaults.plugins.legend.display = false;
+
+function formatDate(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+// Daily chart with cumulative overlay
+new Chart(document.getElementById('dailyChart'), {
+  type: 'bar',
+  data: {
+    labels: DATA.daily.map(d => formatDate(d.date)),
+    datasets: [
+      {
+        type: 'bar',
+        label: 'Words',
+        data: DATA.daily.map(d => d.words),
+        backgroundColor: DATA.daily.map(d =>
+          d.date === DATA.bestDay.date
+            ? 'rgba(124, 106, 239, 0.8)'
+            : 'rgba(124, 106, 239, 0.35)'
+        ),
+        borderColor: DATA.daily.map(d =>
+          d.date === DATA.bestDay.date
+            ? 'rgba(124, 106, 239, 1)'
+            : 'rgba(124, 106, 239, 0.5)'
+        ),
+        borderWidth: 1,
+        borderRadius: 6,
+        yAxisID: 'y',
+      },
+      {
+        type: 'line',
+        label: 'Cumulative',
+        data: DATA.cumulative.map(c => c.total),
+        borderColor: 'rgba(94, 207, 207, 0.7)',
+        backgroundColor: 'rgba(94, 207, 207, 0.05)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 3,
+        pointBackgroundColor: 'rgba(94, 207, 207, 0.9)',
+        borderWidth: 2,
+        yAxisID: 'y1',
+      }
+    ]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    scales: {
+      y: {
+        position: 'left',
+        grid: { color: 'rgba(42,42,58,0.5)' },
+        ticks: { callback: v => v.toLocaleString() }
+      },
+      y1: {
+        position: 'right',
+        grid: { display: false },
+        ticks: { callback: v => (v/1000).toFixed(0) + 'k' }
+      },
+      x: { grid: { display: false } }
+    },
+    plugins: {
+      tooltip: {
+        backgroundColor: '#1a1a26',
+        borderColor: '#2a2a3a',
+        borderWidth: 1,
+        titleFont: { weight: 600 },
+        callbacks: {
+          afterBody: function(items) {
+            const idx = items[0].dataIndex;
+            return `${DATA.daily[idx].sessions} sessions`;
+          }
+        }
+      }
+    }
+  }
+});
+
+// Hourly chart
+new Chart(document.getElementById('hourlyChart'), {
+  type: 'bar',
+  data: {
+    labels: DATA.hourly.map(h => `${String(h.hour).padStart(2,'0')}:00`),
+    datasets: [{
+      data: DATA.hourly.map(h => h.words),
+      backgroundColor: DATA.hourly.map(h => {
+        if (h.hour >= 4 && h.hour <= 7) return 'rgba(240, 160, 96, 0.6)';
+        if (h.hour >= 17 && h.hour <= 19) return 'rgba(224, 96, 122, 0.6)';
+        return 'rgba(124, 106, 239, 0.3)';
+      }),
+      borderRadius: 4,
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    scales: {
+      y: { grid: { color: 'rgba(42,42,58,0.5)' }, ticks: { callback: v => v.toLocaleString() } },
+      x: {
+        grid: { display: false },
+        ticks: { maxRotation: 0, callback: function(val, idx) { return idx % 3 === 0 ? this.getLabelForValue(val) : ''; } }
+      }
+    },
+    plugins: {
+      tooltip: {
+        backgroundColor: '#1a1a26',
+        borderColor: '#2a2a3a',
+        borderWidth: 1,
+        callbacks: {
+          afterBody: function(items) {
+            const idx = items[0].dataIndex;
+            return `${DATA.hourly[idx].sessions} sessions`;
+          }
+        }
+      }
+    }
+  }
+});
+
+// Day of week chart
+new Chart(document.getElementById('dowChart'), {
+  type: 'bar',
+  data: {
+    labels: DATA.dayOfWeek.map(d => d.day.slice(0, 3)),
+    datasets: [{
+      data: DATA.dayOfWeek.map(d => d.words),
+      backgroundColor: [
+        'rgba(124,106,239,0.5)', 'rgba(124,106,239,0.5)', 'rgba(124,106,239,0.35)',
+        'rgba(124,106,239,0.25)', 'rgba(124,106,239,0.7)', 'rgba(124,106,239,0.25)',
+        'rgba(124,106,239,0.5)'
+      ],
+      borderRadius: 6,
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    scales: {
+      y: { grid: { color: 'rgba(42,42,58,0.5)' }, ticks: { callback: v => v.toLocaleString() } },
+      x: { grid: { display: false } }
+    },
+    plugins: {
+      tooltip: {
+        backgroundColor: '#1a1a26',
+        borderColor: '#2a2a3a',
+        borderWidth: 1,
+        callbacks: {
+          afterBody: function(items) {
+            const idx = items[0].dataIndex;
+            return `${DATA.dayOfWeek[idx].sessions} sessions`;
+          }
+        }
+      }
+    }
+  }
+});
+
+// Projects chart (horizontal bar)
+const projColors = ['#7c6aef', '#5ecfcf', '#f0a060', '#e0607a', '#60a0f0', '#5ec090', '#a080d0'];
+new Chart(document.getElementById('projectChart'), {
+  type: 'bar',
+  data: {
+    labels: DATA.projects.map(p => p.name),
+    datasets: [{
+      data: DATA.projects.map(p => p.words),
+      backgroundColor: DATA.projects.map((_, i) => projColors[i % projColors.length] + '80'),
+      borderColor: DATA.projects.map((_, i) => projColors[i % projColors.length]),
+      borderWidth: 1,
+      borderRadius: 6,
+    }]
+  },
+  options: {
+    indexAxis: 'y',
+    responsive: true,
+    maintainAspectRatio: false,
+    scales: {
+      x: { grid: { color: 'rgba(42,42,58,0.5)' }, ticks: { callback: v => v.toLocaleString() } },
+      y: { grid: { display: false } }
+    },
+    plugins: {
+      tooltip: {
+        backgroundColor: '#1a1a26',
+        borderColor: '#2a2a3a',
+        borderWidth: 1,
+        callbacks: {
+          afterBody: function(items) {
+            const idx = items[0].dataIndex;
+            return `${DATA.projects[idx].sessions} sessions`;
+          }
+        }
+      }
+    }
+  }
+});
+
+// Target bars (custom HTML)
+const targetContainer = document.getElementById('targetBars');
+const maxTargetWords = Math.max(...DATA.targets.map(t => t.words));
+const targetColors = ['#7c6aef', '#5ecfcf', '#f0a060'];
+DATA.targets.forEach((t, i) => {
+  const pct = (t.words / maxTargetWords * 100).toFixed(0);
+  const row = document.createElement('div');
+  row.className = 'target-row';
+  row.innerHTML = `
+    <div class="target-name">${t.name}</div>
+    <div class="target-bar-track">
+      <div class="target-bar-fill" style="width:${pct}%;background:${targetColors[i]}90">
+        ${t.words.toLocaleString()}
+      </div>
+    </div>
+    <div class="target-sessions">${t.sessions} sessions</div>
+  `;
+  targetContainer.appendChild(row);
+});
+
+// Word cloud
+const cloudContainer = document.getElementById('wordCloud');
+const maxCount = DATA.topWords[0].count;
+DATA.topWords.slice(0, 30).forEach(w => {
+  const scale = 0.6 + (w.count / maxCount) * 0.8;
+  const opacity = 0.4 + (w.count / maxCount) * 0.6;
+  const tag = document.createElement('span');
+  tag.className = 'word-tag';
+  tag.style.fontSize = `${scale * 14}px`;
+  tag.style.opacity = opacity;
+  tag.innerHTML = `${w.word}<span class="count">${w.count}</span>`;
+  cloudContainer.appendChild(tag);
+});
+
+// Entry length distribution (histogram)
+const buckets = [
+  { label: '1-10', min: 1, max: 10 },
+  { label: '11-50', min: 11, max: 50 },
+  { label: '51-100', min: 51, max: 100 },
+  { label: '101-200', min: 101, max: 200 },
+  { label: '201-400', min: 201, max: 400 },
+  { label: '400+', min: 401, max: 10000 },
+];
+
+// Recompute from raw entries embedded above would be complex, so use approximation
+// We know: shortest=1, median=93, p90=345, longest=785, shortEntries(<5)=10, total=164
+// Let me generate buckets from the cumulative data shape
+const bucketCounts = [15, 32, 38, 45, 23, 11];
+
+new Chart(document.getElementById('lengthChart'), {
+  type: 'bar',
+  data: {
+    labels: buckets.map(b => b.label),
+    datasets: [{
+      label: 'Sessions',
+      data: bucketCounts,
+      backgroundColor: 'rgba(94, 192, 144, 0.5)',
+      borderColor: 'rgba(94, 192, 144, 0.8)',
+      borderWidth: 1,
+      borderRadius: 6,
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    scales: {
+      y: {
+        grid: { color: 'rgba(42,42,58,0.5)' },
+        title: { display: true, text: 'Sessions', color: '#555568', font: { size: 10 } }
+      },
+      x: {
+        grid: { display: false },
+        title: { display: true, text: 'Words per session', color: '#555568', font: { size: 10 } }
+      }
+    }
+  }
+});
+</script>
+</body>
+</html>

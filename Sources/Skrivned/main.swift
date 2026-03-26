@@ -14,18 +14,15 @@ func printUsage() {
 
     USAGE:
         skrivned start              Start the dictation daemon
-        skrivned set-hotkey <key>   Set the hold-to-speak hotkey
         skrivned status             Show configuration
+        skrivned last               Show last transcript (copies cleaned to clipboard)
+        skrivned last --raw         Show last transcript (copies raw to clipboard)
+        skrivned log                Open transcript log
         skrivned --help             Show this help message
 
     SETUP:
         mkdir -p ~/.config/skrivned
         echo 'SONIOX_KEY=your_key_here' > ~/.config/skrivned/.env
-
-    HOTKEY EXAMPLES:
-        skrivned set-hotkey globe             Globe/fn key (default)
-        skrivned set-hotkey rightoption        Right Option key
-        skrivned set-hotkey ctrl+space         Ctrl + Space
     """)
 }
 
@@ -44,38 +41,48 @@ func cmdStart() {
     app.run()
 }
 
-func cmdSetHotkey(_ keyString: String) {
-    guard let parsed = KeyCodes.parse(keyString) else {
-        print("Error: Unknown key '\(keyString)'")
-        print("Run 'skrivned --help' for examples")
-        exit(1)
-    }
-
-    var config = Config.load()
-    config.holdHotkey = HotkeyConfig(keyCode: parsed.keyCode, modifiers: parsed.modifiers)
-
-    do {
-        try config.save()
-        let desc = KeyCodes.describe(keyCode: parsed.keyCode, modifiers: parsed.modifiers)
-        print("Hold hotkey set to: \(desc)")
-    } catch {
-        print("Error saving config: \(error.localizedDescription)")
-        exit(1)
-    }
-}
-
 func cmdStatus() {
     let config = Config.load()
-    let holdDesc = KeyCodes.describe(keyCode: config.holdHotkey.keyCode, modifiers: config.holdHotkey.modifiers)
+    let hotkeyDesc = KeyCodes.describe(keyCode: config.hotkey.keyCode, modifiers: config.hotkey.modifiers)
     let hasKey = Config.loadApiKey() != nil
 
     print("skrivned v\(Skrivned.version)")
     print("Config:     \(Config.configFile.path)")
-    print("Hold:       \(holdDesc)")
-    let cleanDesc = KeyCodes.describe(keyCode: config.cleanHotkey.keyCode, modifiers: config.cleanHotkey.modifiers)
-    print("Clean:      \(cleanDesc)")
+    print("Hotkey:     \(hotkeyDesc)")
     print("Languages:  \(config.languageHints.joined(separator: ", "))")
     print("API key:    \(hasKey ? "configured" : "MISSING — add to ~/.config/skrivned/.env")")
+}
+
+func cmdLast(copyRaw: Bool = false) {
+    guard let entry = DictationLog.lastEntry() else {
+        print("No transcripts found.")
+        exit(0)
+    }
+    print(entry.cleaned)
+    if entry.cleaned != entry.raw {
+        print("\n--- raw ---")
+        print(entry.raw)
+    }
+
+    var meta = ""
+    if let proj = entry.project { meta += "[\(proj)] " }
+    if let target = entry.target { meta += "(\(target)) " }
+    meta += entry.timestamp
+    print("\n\(meta)")
+
+    let textToCopy = copyRaw ? entry.raw : entry.cleaned
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(textToCopy, forType: .string)
+    print("(copied \(copyRaw ? "raw" : "cleaned") to clipboard)")
+}
+
+func cmdLog() {
+    let logFile = Config.configDir.appendingPathComponent("dictation_log.jsonl")
+    if FileManager.default.fileExists(atPath: logFile.path) {
+        NSWorkspace.shared.open(logFile)
+    } else {
+        print("No transcript log found at \(logFile.path)")
+    }
 }
 
 let args = CommandLine.arguments
@@ -84,14 +91,13 @@ let command = args.count > 1 ? args[1] : nil
 switch command {
 case "start":
     cmdStart()
-case "set-hotkey":
-    guard args.count > 2 else {
-        print("Usage: skrivned set-hotkey <key>")
-        exit(1)
-    }
-    cmdSetHotkey(args[2])
 case "status":
     cmdStatus()
+case "last":
+    let copyRaw = args.contains("--raw")
+    cmdLast(copyRaw: copyRaw)
+case "log":
+    cmdLog()
 case "--help", "-h", "help":
     printUsage()
 case nil:
